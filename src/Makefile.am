@@ -4,7 +4,8 @@ bin_PROGRAMS = iec104
 
 iec104_SOURCES = iec104.c iec104.h log.c log.h debug.h \
 	tcp_server.c tcp_server.h client.h client.c \
-	cur_values.c write_queue.h write_queue.c
+	apdu.h apdu.c asdu.c \
+	cur_values.c
 
 AM_CFLAGS = -std=gnu99 -D_FILE_OFFSET_BITS=64 -Wall
 #for debug: ./configure CFLAGS='-ggdb -O0'

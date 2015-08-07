@@ -6,7 +6,6 @@
 
 #include "iec104.h"
 #include "log.h"
-#include "write_queue.h"
 #include "client.h"
 
 #include "debug.h"
@@ -33,7 +32,7 @@ void tcp_server_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf) {
 #endif
 		uv_close((uv_handle_t *) client, client_close);
 	} else if (nread > 0) {
-		if (client_parse_request(client, buf) == -1)
+		if (client_parse_request((client_t *)client, buf, nread) == -1)
 			iec104_log(LOG_ERR, "Ошибка разбора пакета");
 	}
 	if (buf->base)
@@ -47,7 +46,7 @@ void on_new_connection(uv_stream_t *server, int status) {
 		return;
 	}
 
-	client *c = client_create();
+	client_t *c = client_create();
 #ifdef DEBUG
 	iec104_log(LOG_DEBUG, "New connection: %p", c);
 #endif
