@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <sys/queue.h>
 #include <uv.h>
 
 #include "client.h"
@@ -9,16 +10,15 @@
 #include "asdu.h"
 #include "log.h"
 
-#define APDU_START 0x68
-#define APDU_MAX_LEN 253
-#define APDU_MAX_COUNT 32767
+#include "debug.h"
 
-static void print_apdu(const char *head, const char *buf, int size);
+#define APDU_START 0x68
+#define APDU_MAX_COUNT 32767
 
 void print_apdu(const char *head, const char *buf, int size)
 {
 	char *p = NULL;
-	asprintf(&p, "%s ", head);
+	asprintf(&p, "%s (%d):", head, size);
 	for (int i = 0; i < size; i++)
 		asprintf(&p, "%s %02x", p, buf[i]);
 	iec104_log(LOG_DEBUG, "%s", p);
@@ -46,9 +46,13 @@ int check_apdu(client_t *clt, const uv_buf_t *buf, ssize_t sz, int offset)
 		asprintf(&err_msg, "APDU: buffer bound violation: apdu length: %d buffer length: %ld", apdu->apci.len, sz-offset);
 	
 	if (err_msg) {
-		print_apdu("rcv:", (const char *)apdu, sz);
+		print_apdu("rcv", (const char *)apdu, sz);
 		goto err;
 	}
+
+#ifdef DEBUG
+	print_apdu("rcv", (const char *)apdu, sz);
+#endif
 	
 	APDU_TYPE type = apdu_type(apdu);
 	// ptotocol check
@@ -96,24 +100,25 @@ int check_apdu(client_t *clt, const uv_buf_t *buf, ssize_t sz, int offset)
 					asprintf(&err_msg, "APDU: unexpected STARTDT_act");
 				break;
 			case AT_I:
-				// Проверка числа переданных сервером APDU
-				if (apdu->apci.i.ns != clt->count.nr) {
-					asprintf(&err_msg, "APDU: invalid sent num: %d expected: %d", apdu->apci.i.ns, clt->count.nr);
+				// Проверка числа переданных клиентом APDU
+				if (apdu->apci.i.ns != clt->nr) {
+					asprintf(&err_msg, "APDU: invalid apdu received num: %u expected: %u", apdu->apci.i.ns, clt->nr);
 					break;
 				}
 
 			case AT_S: {
-				// Проверка числа подтвержденных сервером APDU
-				int kv = ((int)clt->count.ns) - clt->nk;
-				if (kv < 0) kv += APDU_MAX_COUNT; 
-				if ((kv > clt->count.ns &&
-					apdu->apci.s.nr > clt->count.ns &&
-					apdu->apci.s.nr < kv) ||
-					(kv <= clt->count.ns &&
-					(apdu->apci.s.nr < kv || 
-					apdu->apci.s.nr > clt->count.ns)))
-					asprintf(&err_msg, "APDU: invalid confirmed number: %d last send: %d wait to confirm: %d", apdu->apci.s.nr, clt->count.ns, clt->nk);
-				break;
+				// Проверка числа принятых клиентом APDU
+				struct {
+					unsigned char res1:1;
+					unsigned short n:15;
+				} nh, nc;
+
+				nh.n = clt->ns - clt->queue_len;
+				nc.n = apdu->apci.i.nr - nh.n;
+				if (nc.n > clt->nk) {
+					asprintf(&err_msg, "APDU: invalid client receive num: %u server queueded num first:%u last:%u", apdu->apci.i.nr, nh.n, clt->ns);
+					break;
+				}
 			}
 		}
 	}
@@ -129,13 +134,17 @@ err:
 	return ret;
 }
 
-void init_apdu(client *clt, char *buf, APDU_TYPE apdu_type)
+void enqueue_apdu(client_t *clt, apdu_t *apdu)
 {
-	apdu_t *apdu = (apdu_t *)buf;
-	*apdu = {0};
+	enqueue(clt, (char *)apdu, apdu->apci.len+2);
+}
+
+void init_apdu(client_t *clt, apdu_t *apdu, APDU_TYPE type)
+{
+	*apdu = (const apdu_t){0};
 	apdu->apci.start_byte = APDU_START;
 	apdu->apci.len = sizeof(apdu_t)-2; 
-	switch (apdu_type) {
+	switch (type) {
 		case AT_S: {
 			apdu->apci.s.ft = 1;
 			break;

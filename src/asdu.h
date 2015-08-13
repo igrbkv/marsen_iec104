@@ -10,43 +10,45 @@ typedef enum {
 
 typedef struct _data_unit_id_t {
 	unsigned char type_id;	// type identification
-	struct f_vsq {		// variable structure qualifier
+	struct {		// variable structure qualifier
 		unsigned char num:7; // number of inf objects/elements
 		unsigned char sq_bit:1; // 0/1 - objects/elements
-	} vsq;
-	struct f_cot {		// cause of transmission
+	};
+	struct {		// cause of transmission
 		unsigned char code:6;
 		unsigned char confirm_bit:1;
 		unsigned char test_bit:1;
 		unsigned char originator_adr;
-	} cot;
+	};
 	unsigned short common_adr;
 
 } data_unit_id_t;
 
-typedef struct _inf_obj_t {
-	unsigned short adr;
-	unsigned char not_used_adr_byte;
-	char data[];
-} inf_obj_t;
-
-typedef struct _qualifier {
+typedef struct _qualifier_t {
 	union {
 		struct {
 			unsigned char QOI;
 		};
 	};
-} qualifier;
+} qualifier_t;
 
 typedef struct _inf_el_t {
 	union {
-		qualifier q;
+		qualifier_t q;
 	};
 } inf_el_t;
 
+typedef struct __attribute__((__packed__)) _inf_obj_t {
+	unsigned short adr;
+	unsigned char not_used_adr_byte;
+	inf_el_t inf_el[];
+} inf_obj_t;
+
 typedef struct _asdu_t {
 	data_unit_id_t dui;
-	inf_obj_t data[];
+	inf_obj_t inf_obj[];
 } asdu_t;
+
+extern void process_asdu(client_t *clt, asdu_t *asdu, int size);
 
 #endif

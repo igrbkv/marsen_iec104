@@ -8,6 +8,7 @@
 #include "iec104.h"
 #include "client.h"
 #include "apdu.h"
+#include "asdu.h"
 #include "log.h"
 
 #include "debug.h"
@@ -18,16 +19,12 @@ typedef struct _write_req_t {
 	uv_buf_t buf;
 } write_req_t;
 
-unsigned short iec104_k;
-unsigned short iec104_w;
+int iec104_k = 12; // max num of sent APDU waiting for confirm
+int iec104_w = 8; // -- " --   received  -- " --
 
-static APDU_TYPE apdu_type(apdu_t *apdu);
-void process_request(client_t *clt, apdu_t *apdu);
-void remove_confirmed(client *clt)
-static void response(client *clt);
-
-
-
+static void process_request(client_t *clt, apdu_t *apdu);
+static void remove_confirmed(client_t *clt, unsigned short n);
+static void response(client_t *clt);
 
 
 void on_write(uv_write_t *req, int status)
@@ -41,36 +38,42 @@ void on_write(uv_write_t *req, int status)
 		uv_close((uv_handle_t*)req->handle, client_close);
 		return;
 	}
-	
-	// FIXME сделать мультипакетную передачу и убрать
-	// отсюда
-	response();
 }
 
 
-
-
 // удалить из очереди подтвержденные APDU
-void remove_confirmed(client *clt)
+void remove_confirmed(client_t *clt, unsigned short n)
 {
-	write_queue_el_t *v, tmp;
-	STAILQ_FOREACH(v, &clt->write_queue, next) {
-		tmp = *v;
-		apdu_t *apdu = (apdu_t *)v->data;
-		if (apdu_type(apdu) == AT_I) {
-			if (apdu->apci.i.ns == clt->count.ns)
-				break;
-			STAILQ_REMOVE(&clt->write_queue, v, write_queue_t, next);
-			free(apdu);
-			free(v);
-			v = &tmp;
-		}
+	write_queue_el_t *el;
+
+	struct {
+		unsigned char  res1:1;
+		unsigned short n:15;
+	} n2r;
+	n2r.n = clt->ns - n;
+	
+	while (n2r.n) {
+		el = STAILQ_FIRST(&clt->write_queue);
+		STAILQ_REMOVE_HEAD(&clt->write_queue, next);
+		free(el);
+		clt->nk--;
+		clt->queue_len--;
+		n2r.n--;
 	}
 }
 
 void process_i(client_t *clt, apdu_t *apdu)
 {
-	process_asdu(clt, &apdu->asdu[0], apdu->apci.len+2-sizeof(apci_t));
+	process_asdu(clt, (asdu_t *)apdu->asdu, apdu->apci.len+2-sizeof(apci_t));
+}
+
+void enqueue(client_t *clt, char *data, int size)
+{
+	write_queue_el_t *el = (write_queue_el_t *)malloc(sizeof(*el)+size);
+	memcpy(el->data, data, size);
+	STAILQ_INSERT_TAIL(&clt->write_queue, el, next);
+
+	clt->queue_len++;
 }
 
 void process_request(client_t *clt, apdu_t *apdu)
@@ -78,25 +81,24 @@ void process_request(client_t *clt, apdu_t *apdu)
 	APDU_TYPE type = apdu_type(apdu);
 	switch (type) {
 		case AT_U: {
+			apdu_t *resp = (apdu_t *)clt->ctl_apdu;
+			init_apdu(clt, resp, AT_U);
 			if (apdu->apci.u.startdt_act) {
 				clt->started = 1;
-				apdu_t *resp = malloc(sizeof(apdu_t));
-				init_apdu(clt, (char *)resp, AT_U);
 				resp->apci.u.startdt_con = 1;
-				write_queue_el_t *el = (write_queue_el_t *)malloc(sizeof(*el));
-				el->apdu = resp;
-				STAILQ_INSERT_TAIL(&clt->write_queue, el, next);
+
+			} else if (apdu->apci.u.testfr_act) {
+				resp->apci.u.testfr_con = 1;
 			}
 			break;	
 		}
 		case AT_S: {
-			clt->count.ns = apdu->apci.s.nr;
-			remove_confirmed(clt);
+			remove_confirmed(clt, apdu->apci.s.nr);
 			break;
 		}
 		case AT_I: {
-			clt->count.ns = apdu->apci.i.nr;
-			remove_confirmed(clt);
+			clt->nr++;
+			remove_confirmed(clt, apdu->apci.i.nr);
 			process_i(clt, apdu);
 			break;
 		}
@@ -106,36 +108,49 @@ void process_request(client_t *clt, apdu_t *apdu)
 
 void response(client_t *clt)
 {
-	write_queue_el_t *v;
+	write_queue_el_t *el;
 	apdu_t *apdu;
-	void *buf = NULL;
-	size_t len;
+	char *buf = NULL;
+	size_t buf_len = 0, apdu_len;
+	int nk = 0;
 
-	STAILQ_FOREACH(v, &clt->write_queue, next) {
-		apdu = (apdu_t *) v->apdu;
-		APDU_TYPE type = apdu_type(apdu); 
-		if (type == AT_U || type == AT_S) {
-			buf = apdu;
-			len = apdu->apci.len+2;
-			// информационные APDU остаются в очереди 
-			// до подтверждения
-			STAILQ_REMOVE(&clt->write_queue, v, _write_queue_el_t, next);
-			free(v);
-			break;
+	STAILQ_FOREACH(el, &clt->write_queue, next) {
+		if (nk < clt->nk) {
+			nk++;
+			continue;
 		}
+		else if (nk == iec104_k)
+			break;
+		clt->nk++;
+		apdu = (apdu_t *)&el->data[0];
+		apdu_len = apdu->apci.len+2;
+		buf = realloc(buf, buf_len + apdu_len);
+		memcpy(&buf[buf_len], apdu, apdu_len);
+		buf_len += apdu_len;
+	}
+	
+	// add U/S apdu
+	apdu = (apdu_t *)clt->ctl_apdu;
+	apdu_len = apdu->apci.len+2;
+	if (apdu->apci.len) {
+		buf = realloc(buf, buf_len + apdu_len);
+		memcpy(&buf[buf_len], apdu, apdu_len);
+		buf_len += apdu_len;
+		apdu->apci.len = 0;
 	}
 
-	if (buf) {
-		write_req_t* wr = (write_req_t *)malloc(sizeof(*wr));
-		wr->buf = uv_buf_init(buf, len);
+	if (!buf)
+		return;
+
+	write_req_t* wr = (write_req_t *)malloc(sizeof(*wr));
+	wr->buf = uv_buf_init(buf, buf_len);
 #ifdef DEBUG
-		print_apdu("write", buf, len);
+	print_apdu("write", buf, buf_len);
 #endif
-		int r = uv_write(&wr->req, (uv_stream_t *)clt, &wr->buf, 1, on_write);
-		if (r != 0) {
-			iec104_log(LOG_DEBUG, "uv_write failed: %s", uv_strerror(r));
-			uv_close((uv_handle_t *)clt, client_close);
-		}
+	int r = uv_write(&wr->req, (uv_stream_t *)clt, &wr->buf, 1, on_write);
+	if (r != 0) {
+		iec104_log(LOG_DEBUG, "uv_write failed: %s", uv_strerror(r));
+		uv_close((uv_handle_t *)clt, client_close);
 	}
 }
 
@@ -188,7 +203,6 @@ void client_close(uv_handle_t *h)
 	while (!STAILQ_EMPTY(q)) {
 		write_queue_el_t *fe = STAILQ_FIRST(q);
 		STAILQ_REMOVE_HEAD(q, next);
-		free(fe->data);
 		free(fe);
 	}
 

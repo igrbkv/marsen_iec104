@@ -8,6 +8,8 @@
 #include "asdu.h"
 #include "log.h"
 
+#include "debug.h"
+
 // Поддерживаемые команды управления
 // 1. Общий опрос C_IC_NA_1
 // 2. Опрос счетчиков 
@@ -36,30 +38,41 @@
 #define COT_UNKNOWN_INFORMATION_OBJECT_ADDRESS 47
 
 
+unsigned char originator_adr;
+
 void process_asdu(client_t *clt, asdu_t *in_asdu, int size)
 {
 	char buf[APDU_MAX_LEN+2];
-	int offset = 0;
-	int out_apdu_size;
 	apdu_t *out_apdu = (apdu_t *)buf;
 	asdu_t *out_asdu = (asdu_t *)&buf[sizeof(apdu_t)];
-	out_asdu->dui.type_id = in_asdu->dui.type_id;
 
-	unsigned short cot;
 	switch (in_asdu->dui.type_id) {
 		case C_IC_NA_1: {
-			init_apdu(clt, buf, AT_I);
-				
+			// confirmation
+			init_apdu(clt, out_apdu, AT_I);
+			*out_asdu = *in_asdu;
+			out_asdu->dui.code = COT_ACTIVATION_CONFIRMATION;
+			out_asdu->inf_obj[0] = (const inf_obj_t){0};
+			out_asdu->inf_obj[0].inf_el[0].q.QOI = 20;
+			out_apdu->apci.len += sizeof(asdu_t) + sizeof(inf_obj_t) + sizeof(inf_el_t);
+			enqueue_apdu(clt, out_apdu);
+			// data transmission
+			// ...
+			
+			// termination
+			init_apdu(clt, out_apdu, AT_I);
+			*out_asdu = *in_asdu;
+			out_asdu->dui.code = COT_ACTIVATION_TERMINATION;
+			out_apdu->apci.len += sizeof(asdu_t) + sizeof(inf_obj_t) + sizeof(inf_el_t);
+			enqueue_apdu(clt, out_apdu);
 			break;
 		}
 		default: {
-			cot = COT_UNKNOWN_TYPE_IDENTIFICATION;
-			goto err;
+			init_apdu(clt, out_apdu, AT_I);
+			*out_asdu = *in_asdu;
+			out_apdu->apci.len += size;
+			out_asdu->dui.code = COT_UNKNOWN_TYPE_IDENTIFICATION;
+			enqueue_apdu(clt, out_apdu);
 		}
 	}
-
-
-	return;
-err:
-	
 }

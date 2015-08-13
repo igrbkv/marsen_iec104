@@ -1,6 +1,8 @@
 #ifndef APDU_H_
 #define APDU_H_
 
+#define APDU_MAX_LEN 253
+
 typedef enum {
 	AT_I,
 	AT_S,
@@ -38,13 +40,12 @@ typedef struct _apci_t {
 	};
 } apci_t;
 
-
 typedef struct _apdu_t {
 	apci_t apci;
 	char asdu[];
 } apdu_t;
 
-inline APDU_TYPE apdu_type(apdu_t *apdu)
+static inline APDU_TYPE apdu_type(apdu_t *apdu)
 {
 	if (apdu->apci.i.ft == 0)
 		return AT_I;
@@ -54,6 +55,8 @@ inline APDU_TYPE apdu_type(apdu_t *apdu)
 	return AT_S;
 }
 
+extern void enqueue_apdu(client_t *clt, apdu_t *apdu);
 extern int check_apdu(client_t *clt, const uv_buf_t *buf, ssize_t sz, int offset);
-extern void init_apdu(client *clt, char *buf, APDU_TYPE apdu_type);
+extern void init_apdu(client_t *clt, apdu_t *apdu, APDU_TYPE apdu_type);
+extern void print_apdu(const char *head, const char *buf, int size);
 #endif
