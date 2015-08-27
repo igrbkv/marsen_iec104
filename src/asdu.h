@@ -3,10 +3,34 @@
 
 typedef enum {
 	ASDU_TYPE_NOT_DEFINED,
+	M_ME_NC_1 = 13,		// measured, short FP number
 	C_IC_NA_1 = 100,	// interrogation command
 	C_CI_NA_1 = 101,	// counter interrogation command
 	C_CS_NA_1 = 103		// clock synchronization command
 } ASDU_TYPE;
+
+// Cause of transmission
+#define COT_CYCLIC 1
+#define COT_BACKGROUND_SCAN 2
+#define COT_SPONTANEOUS 3
+#define COT_INITIALIZED 4
+#define COT_REQUEST 5
+#define COT_ACTIVATION 6
+#define COT_ACTIVATION_CONFIRMATION 7
+#define COT_DEACTIVATION 8
+#define COT_DEACTIVATION_CONFIRMATION 9
+#define COT_ACTIVATION_TERMINATION 10
+#define COT_REMOTE_COMMAND 11
+#define COT_LOCAL_COMMAND 12
+#define COT_FILE_TRANSFER 13
+#define COT_STATION_INTERROGATION 20
+#define COT_GROUP_INTERROGATION 21
+#define COT_GENERAL_COUNTER_REQUEST 37
+#define COT_GROUP_COUNTER_REQUEST 38
+#define COT_UNKNOWN_TYPE_IDENTIFICATION 44
+#define COT_UNKNOWN_CAUSE_OF_TRANSMISSION 45
+#define COT_UNKNOWN_COMMON_ADDRESS 46
+#define COT_UNKNOWN_INFORMATION_OBJECT_ADDRESS 47
 
 typedef struct _data_unit_id_t {
 	unsigned char type_id;	// type identification
@@ -29,12 +53,30 @@ typedef struct _qualifier_t {
 		struct {
 			unsigned char QOI;
 		};
+		struct {
+			unsigned char OV:1;	// Overflow
+			unsigned char res:3;
+			unsigned char BL:1;	// Blocked
+			unsigned char SB:1;	// Substituted
+			unsigned char NT:1;	// Not Topical
+			unsigned char IV:1; // Invalid
+		} QDS;
 	};
 } qualifier_t;
 
+typedef struct _type_100_t {
+	qualifier_t qual;
+} type_100_t;
+
+typedef struct __attribute__((__packed__)) _type_13_t {
+	float sfpn;	//short FP number
+	qualifier_t qual;
+} type_13_t;
+
 typedef struct _inf_el_t {
 	union {
-		qualifier_t q;
+		type_13_t t13;
+		type_100_t t100;
 	};
 } inf_el_t;
 
@@ -49,6 +91,8 @@ typedef struct _asdu_t {
 	inf_obj_t inf_obj[];
 } asdu_t;
 
-extern void process_asdu(client_t *clt, asdu_t *asdu, int size);
+extern int process_asdu(client_t *clt, asdu_t *asdu, int size);
 
+extern int station_interrogation(client_t *clt, int group, unsigned short common_adr);
+extern unsigned char iec104_originator_adr;
 #endif

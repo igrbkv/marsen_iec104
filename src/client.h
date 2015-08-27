@@ -22,14 +22,18 @@ typedef struct _client_t {
 		unsigned short nr:15;
 		int nk;	// number of not confirmed
 	};
-	uv_timer_t t1;
-	uv_timer_t t2;
-	uv_timer_t t3;
+	uv_timer_t t1;	// подтвержд. последнего переданного
+	uv_timer_t t2;	// подтвержд. последнего принятого	
+	uv_timer_t t3;	// тестирование при неактивности 
 } client_t;
 
 
 extern int client_parse_request(client_t *clt, const uv_buf_t *buf, ssize_t sz);
 extern void enqueue(client_t *clt, char *data, int size);
+extern void response(client_t *clt);
 extern client_t *client_create();
 extern void client_close(uv_handle_t *h);
+extern void start_t1(client_t *clt);
+extern void start_t2(client_t *clt);
+extern void start_t3(client_t *clt);
 #endif

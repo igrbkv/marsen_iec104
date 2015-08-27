@@ -22,9 +22,8 @@ typedef struct _write_req_t {
 int iec104_k = 12; // max num of sent APDU waiting for confirm
 int iec104_w = 8; // -- " --   received  -- " --
 
-static void process_request(client_t *clt, apdu_t *apdu);
+static int process_request(client_t *clt, apdu_t *apdu);
 static void remove_confirmed(client_t *clt, unsigned short n);
-static void response(client_t *clt);
 
 
 void on_write(uv_write_t *req, int status)
@@ -42,15 +41,17 @@ void on_write(uv_write_t *req, int status)
 
 
 // удалить из очереди подтвержденные APDU
-void remove_confirmed(client_t *clt, unsigned short n)
+void remove_confirmed(client_t *clt, unsigned short nr)
 {
 	write_queue_el_t *el;
-
+#if 0
 	struct {
 		unsigned char  res1:1;
 		unsigned short n:15;
 	} n2r;
-	n2r.n = clt->ns - n;
+	// номер первого
+	n2r.n = clt->ns - clt->queue_len;
+	n2r.n = nr - n2r.n;
 	
 	while (n2r.n) {
 		el = STAILQ_FIRST(&clt->write_queue);
@@ -60,11 +61,34 @@ void remove_confirmed(client_t *clt, unsigned short n)
 		clt->queue_len--;
 		n2r.n--;
 	}
+#else
+	// num not confirmed
+	int nc = clt->ns - nr;
+	if (nc < 0)
+		nc += APDU_MAX_COUNT;
+	// num confirmed
+	nc = clt->queue_len - nc;
+	while (nc) {
+		el = STAILQ_FIRST(&clt->write_queue);
+		STAILQ_REMOVE_HEAD(&clt->write_queue, next);
+		free(el);
+		clt->nk--;
+		clt->queue_len--;
+		nc--;
+	}
+#endif
+
+	if (clt->nk == 0) {
+		uv_timer_stop(&clt->t1);
+#ifdef DEBUG
+		iec104_log(LOG_DEBUG, "stop t1");
+#endif
+	}
 }
 
-void process_i(client_t *clt, apdu_t *apdu)
+int process_i(client_t *clt, apdu_t *apdu)
 {
-	process_asdu(clt, (asdu_t *)apdu->asdu, apdu->apci.len+2-sizeof(apci_t));
+	return process_asdu(clt, (asdu_t *)apdu->asdu, apdu->apci.len+2-sizeof(apci_t));
 }
 
 void enqueue(client_t *clt, char *data, int size)
@@ -76,20 +100,31 @@ void enqueue(client_t *clt, char *data, int size)
 	clt->queue_len++;
 }
 
-void process_request(client_t *clt, apdu_t *apdu)
+int process_request(client_t *clt, apdu_t *apdu)
 {
+	int ret = 0;
 	APDU_TYPE type = apdu_type(apdu);
 	switch (type) {
 		case AT_U: {
 			apdu_t *resp = (apdu_t *)clt->ctl_apdu;
-			init_apdu(clt, resp, AT_U);
 			if (apdu->apci.u.startdt_act) {
+				init_apdu(clt, resp, AT_U);
 				clt->started = 1;
 				resp->apci.u.startdt_con = 1;
 
 			} else if (apdu->apci.u.testfr_act) {
+				init_apdu(clt, resp, AT_U);
 				resp->apci.u.testfr_con = 1;
+			} else if (apdu->apci.u.testfr_con) {
+				if (!clt->nk && uv_is_active((uv_handle_t *)&clt->t1))
+				{
+					uv_timer_stop(&clt->t1);
+#ifdef DEBUG
+					iec104_log(LOG_DEBUG, "stop t1");
+#endif
+				}
 			}
+
 			break;	
 		}
 		case AT_S: {
@@ -97,13 +132,17 @@ void process_request(client_t *clt, apdu_t *apdu)
 			break;
 		}
 		case AT_I: {
+			if (!uv_is_active((uv_handle_t *)&clt->t2))
+				start_t2(clt);
+
 			clt->nr++;
 			remove_confirmed(clt, apdu->apci.i.nr);
-			process_i(clt, apdu);
+			ret = process_i(clt, apdu);
 			break;
 		}
 
 	}
+	return ret;
 }
 
 void response(client_t *clt)
@@ -113,13 +152,14 @@ void response(client_t *clt)
 	char *buf = NULL;
 	size_t buf_len = 0, apdu_len;
 	int nk = 0;
+	int last_nk = clt->nk;
+
 
 	STAILQ_FOREACH(el, &clt->write_queue, next) {
-		if (nk < clt->nk) {
-			nk++;
+		if (nk++ < clt->nk) {
 			continue;
 		}
-		else if (nk == iec104_k)
+		else if (nk > iec104_k)
 			break;
 		clt->nk++;
 		apdu = (apdu_t *)&el->data[0];
@@ -141,6 +181,20 @@ void response(client_t *clt)
 
 	if (!buf)
 		return;
+	
+	if (last_nk != clt->nk) { 
+		// если посылаются AT_I
+		// t1 запустить 
+		if (!uv_is_active((uv_handle_t *)&clt->t1))
+			start_t1(clt);
+		// t2 остановить
+		if (uv_is_active((uv_handle_t *)&clt->t2)) {
+			uv_timer_stop(&clt->t2);
+#ifdef DEBUG
+			iec104_log(LOG_DEBUG, "stop t2");
+#endif
+		}
+	}
 
 	write_req_t* wr = (write_req_t *)malloc(sizeof(*wr));
 	wr->buf = uv_buf_init(buf, buf_len);
@@ -158,6 +212,9 @@ int client_parse_request(client_t *clt, const uv_buf_t *buf, ssize_t sz)
 {
 	int offset = 0;
 	apdu_t *apdu;
+
+	start_t3(clt);
+
 	while (offset < sz) {
 		if (check_apdu(clt, buf, sz, offset) == -1) {
 			uv_close((uv_handle_t*) clt, client_close);
@@ -165,13 +222,16 @@ int client_parse_request(client_t *clt, const uv_buf_t *buf, ssize_t sz)
 		}
 		
 		apdu = (apdu_t *)&buf->base[offset];
-		process_request(clt, apdu);
+		if(process_request(clt, apdu) == -1) {
+			uv_close((uv_handle_t*) clt, client_close);
+			clean_exit_with_status(EXIT_FAILURE);
+			return -1;
+		}
+
+		response(clt);
 
 		offset += apdu->apci.len + 2;
 	}
-
-	response(clt);
-
 	return 0;
 }
 
@@ -180,6 +240,9 @@ client_t *client_create()
 	client_t *c = (client_t *)malloc(sizeof(client_t));
 	memset(c, 0, sizeof(*c));
 	uv_tcp_init(loop, (uv_tcp_t *)c);
+	c->t1.data = c;
+	c->t2.data = c;
+	c->t3.data = c;
 	uv_timer_init(loop, &c->t1);
 	uv_timer_init(loop, &c->t2);
 	uv_timer_init(loop, &c->t3);

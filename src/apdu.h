@@ -2,6 +2,7 @@
 #define APDU_H_
 
 #define APDU_MAX_LEN 253
+#define APDU_MAX_COUNT 32768
 
 typedef enum {
 	AT_I,

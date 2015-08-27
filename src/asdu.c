@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <string.h>
 #include <sys/queue.h>
 #include <uv.h>
 
@@ -14,33 +15,10 @@
 // 1. Общий опрос C_IC_NA_1
 // 2. Опрос счетчиков 
 
-// Cause of transmission
-#define COT_CYCLIC 1
-#define COT_BACKGROUND_SCAN 2
-#define COT_SPONTANEOUS 3
-#define COT_INITIALIZED 4
-#define COT_REQUEST 5
-#define COT_ACTIVATION 6
-#define COT_ACTIVATION_CONFIRMATION 7
-#define COT_DEACTIVATION 8
-#define COT_DEACTIVATION_CONFIRMATION 9
-#define COT_ACTIVATION_TERMINATION 10
-#define COT_REMOTE_COMMAND 11
-#define COT_LOCAL_COMMAND 12
-#define COT_FILE_TRANSFER 13
-#define COT_STATION_INTERROGATION 20
-#define COT_GROUP_INTERROGATION 21
-#define COT_GENERAL_COUNTER_REQUEST 37
-#define COT_GROUP_COUNTER_REQUEST 38
-#define COT_UNKNOWN_TYPE_IDENTIFICATION 44
-#define COT_UNKNOWN_CAUSE_OF_TRANSMISSION 45
-#define COT_UNKNOWN_COMMON_ADDRESS 46
-#define COT_UNKNOWN_INFORMATION_OBJECT_ADDRESS 47
 
+unsigned char iec104_originator_adr;
 
-unsigned char originator_adr;
-
-void process_asdu(client_t *clt, asdu_t *in_asdu, int size)
+int process_asdu(client_t *clt, asdu_t *in_asdu, int size)
 {
 	char buf[APDU_MAX_LEN+2];
 	apdu_t *out_apdu = (apdu_t *)buf;
@@ -53,26 +31,29 @@ void process_asdu(client_t *clt, asdu_t *in_asdu, int size)
 			*out_asdu = *in_asdu;
 			out_asdu->dui.code = COT_ACTIVATION_CONFIRMATION;
 			out_asdu->inf_obj[0] = (const inf_obj_t){0};
-			out_asdu->inf_obj[0].inf_el[0].q.QOI = 20;
-			out_apdu->apci.len += sizeof(asdu_t) + sizeof(inf_obj_t) + sizeof(inf_el_t);
+			out_asdu->inf_obj[0].inf_el[0].t100.qual.QOI = 20;
+			out_apdu->apci.len += sizeof(asdu_t) + sizeof(inf_obj_t) + sizeof(qualifier_t);
 			enqueue_apdu(clt, out_apdu);
+
 			// data transmission
-			// ...
+			if (station_interrogation(clt, 0, in_asdu->dui.originator_adr) == -1)
+				return -1;
 			
 			// termination
 			init_apdu(clt, out_apdu, AT_I);
 			*out_asdu = *in_asdu;
 			out_asdu->dui.code = COT_ACTIVATION_TERMINATION;
-			out_apdu->apci.len += sizeof(asdu_t) + sizeof(inf_obj_t) + sizeof(inf_el_t);
+			out_apdu->apci.len += sizeof(asdu_t) + sizeof(inf_obj_t) + sizeof(qualifier_t);
 			enqueue_apdu(clt, out_apdu);
 			break;
 		}
 		default: {
 			init_apdu(clt, out_apdu, AT_I);
-			*out_asdu = *in_asdu;
+			memcpy(out_asdu, in_asdu, size );
 			out_apdu->apci.len += size;
 			out_asdu->dui.code = COT_UNKNOWN_TYPE_IDENTIFICATION;
 			enqueue_apdu(clt, out_apdu);
 		}
 	}
+	return 0;
 }

@@ -20,6 +20,7 @@
 
 #include "iec104.h"
 #include "tcp_server.h"
+#include "cur_values.h"
 #include "log.h"
 
 #define IEC104_CONFFILE IEC104_CONFPATH "/iec104.conf"
@@ -81,7 +82,8 @@ int main(int argc, char **argv)
 
 	loop = uv_default_loop();
 
-	if (tcp_server_init() == -1)
+	if (cur_values_init() == -1 || 
+		tcp_server_init() == -1)
 		goto  end;
 
 	iec104_log(LOG_INFO, "started");		
@@ -116,6 +118,10 @@ static void open_log(void)
 
 static void cleanup()
 {
+
+	tcp_server_close();
+	cur_values_close();
+
 	if (loop != NULL) {
 		uv_loop_close(loop);
 		loop = NULL;
@@ -147,7 +153,8 @@ static void reload_conf(int sig __attribute__((unused)))
 		goto err;
 	
 	loop = uv_default_loop();
-	if (tcp_server_init() == -1)
+	if (cur_values_init() == -1 ||
+		tcp_server_init() == -1)
 		goto err;
 	uv_run(loop, UV_RUN_DEFAULT);
 

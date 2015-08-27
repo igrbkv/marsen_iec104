@@ -13,14 +13,18 @@
 #include "debug.h"
 
 #define APDU_START 0x68
-#define APDU_MAX_COUNT 32767
 
 void print_apdu(const char *head, const char *buf, int size)
 {
 	char *p = NULL;
+	int total = 0;
 	asprintf(&p, "%s (%d):", head, size);
-	for (int i = 0; i < size; i++)
-		asprintf(&p, "%s %02x", p, buf[i]);
+	while (total < size) {
+		apdu_t *apdu = (apdu_t *)&buf[total];
+		for (int i = 0; i < apdu->apci.len+2; i++, total++)
+			asprintf(&p, "%s %02x", p, (unsigned char)buf[total]);
+		asprintf(&p, "%s\n", p);
+	}
 	iec104_log(LOG_DEBUG, "%s", p);
 	free(p);
 }
@@ -84,8 +88,7 @@ int check_apdu(client_t *clt, const uv_buf_t *buf, ssize_t sz, int offset)
 		asprintf(&err_msg, "APDU: invalid U format");
 	else if (type == AT_U && 
 		(apdu->apci.u.startdt_con ||
-		apdu->apci.u.stopdt_con ||
-		apdu->apci.u.testfr_con))
+		apdu->apci.u.stopdt_con))
 		asprintf(&err_msg, "APDU: unexpected %s", apdu->apci.u.startdt_con? "STARTDT_con": apdu->apci.u.stopdt_con? "STOPDT_con": "TESTFR_con");
 	else if (type == AT_I &&
 		apdu->apci.i.res)
