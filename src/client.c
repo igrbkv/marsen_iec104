@@ -22,7 +22,7 @@ typedef struct _write_req_t {
 int iec104_k = 12; // max num of sent APDU waiting for confirm
 int iec104_w = 8; // -- " --   received  -- " --
 
-static int process_request(client_t *clt, apdu_t *apdu);
+static void process_request(client_t *clt, apdu_t *apdu);
 static void remove_confirmed(client_t *clt, unsigned short n);
 
 
@@ -38,7 +38,6 @@ void on_write(uv_write_t *req, int status)
 		return;
 	}
 }
-
 
 // удалить из очереди подтвержденные APDU
 void remove_confirmed(client_t *clt, unsigned short nr)
@@ -83,26 +82,32 @@ void remove_confirmed(client_t *clt, unsigned short nr)
 #ifdef DEBUG
 		iec104_log(LOG_DEBUG, "stop t1");
 #endif
+	} else if (!STAILQ_EMPTY(&clt->write_queue)) {
+		el = STAILQ_FIRST(&clt->write_queue);		
+		struct timespec ts;
+		clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
+		restart_t1(clt, ts.tv_sec - el->time);
 	}
 }
 
-int process_i(client_t *clt, apdu_t *apdu)
+void process_i(client_t *clt, apdu_t *apdu)
 {
-	return process_asdu(clt, (asdu_t *)apdu->asdu, apdu->apci.len+2-sizeof(apci_t));
+	if (check_asdu(clt, (asdu_t *)apdu->asdu, apdu->apci.len+2-sizeof(apci_t)) != -1)
+		process_asdu(clt, (asdu_t *)apdu->asdu, apdu->apci.len+2-sizeof(apci_t));
 }
 
 void enqueue(client_t *clt, char *data, int size)
 {
 	write_queue_el_t *el = (write_queue_el_t *)malloc(sizeof(*el)+size);
+	el->time = 0;
 	memcpy(el->data, data, size);
 	STAILQ_INSERT_TAIL(&clt->write_queue, el, next);
 
 	clt->queue_len++;
 }
 
-int process_request(client_t *clt, apdu_t *apdu)
+void process_request(client_t *clt, apdu_t *apdu)
 {
-	int ret = 0;
 	APDU_TYPE type = apdu_type(apdu);
 	switch (type) {
 		case AT_U: {
@@ -111,18 +116,19 @@ int process_request(client_t *clt, apdu_t *apdu)
 				init_apdu(clt, resp, AT_U);
 				clt->started = 1;
 				resp->apci.u.startdt_con = 1;
-
+				// cyclic
+				start_tc(clt);
+			} else if (apdu->apci.u.stopdt_act) {
+				init_apdu(clt, resp, AT_U);
+				resp->apci.u.stopdt_con = 1;
 			} else if (apdu->apci.u.testfr_act) {
 				init_apdu(clt, resp, AT_U);
 				resp->apci.u.testfr_con = 1;
 			} else if (apdu->apci.u.testfr_con) {
-				if (!clt->nk && uv_is_active((uv_handle_t *)&clt->t1))
-				{
-					uv_timer_stop(&clt->t1);
+				uv_timer_stop(&clt->t1_u);
 #ifdef DEBUG
-					iec104_log(LOG_DEBUG, "stop t1");
+				iec104_log(LOG_DEBUG, "stop t1_u");
 #endif
-				}
 			}
 
 			break;	
@@ -137,12 +143,11 @@ int process_request(client_t *clt, apdu_t *apdu)
 
 			clt->nr++;
 			remove_confirmed(clt, apdu->apci.i.nr);
-			ret = process_i(clt, apdu);
+			process_i(clt, apdu);
 			break;
 		}
 
 	}
-	return ret;
 }
 
 void response(client_t *clt)
@@ -151,9 +156,11 @@ void response(client_t *clt)
 	apdu_t *apdu;
 	char *buf = NULL;
 	size_t buf_len = 0, apdu_len;
-	int nk = 0;
 	int last_nk = clt->nk;
+	int nk = 0;
+	struct timespec ts;
 
+	clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
 
 	STAILQ_FOREACH(el, &clt->write_queue, next) {
 		if (nk++ < clt->nk) {
@@ -167,12 +174,13 @@ void response(client_t *clt)
 		buf = realloc(buf, buf_len + apdu_len);
 		memcpy(&buf[buf_len], apdu, apdu_len);
 		buf_len += apdu_len;
+		el->time = ts.tv_sec;
 	}
-	
+
 	// add U/S apdu
 	apdu = (apdu_t *)clt->ctl_apdu;
-	apdu_len = apdu->apci.len+2;
 	if (apdu->apci.len) {
+		apdu_len = apdu->apci.len+2;	
 		buf = realloc(buf, buf_len + apdu_len);
 		memcpy(&buf[buf_len], apdu, apdu_len);
 		buf_len += apdu_len;
@@ -187,6 +195,7 @@ void response(client_t *clt)
 		// t1 запустить 
 		if (!uv_is_active((uv_handle_t *)&clt->t1))
 			start_t1(clt);
+
 		// t2 остановить
 		if (uv_is_active((uv_handle_t *)&clt->t2)) {
 			uv_timer_stop(&clt->t2);
@@ -222,11 +231,7 @@ int client_parse_request(client_t *clt, const uv_buf_t *buf, ssize_t sz)
 		}
 		
 		apdu = (apdu_t *)&buf->base[offset];
-		if(process_request(clt, apdu) == -1) {
-			uv_close((uv_handle_t*) clt, client_close);
-			clean_exit_with_status(EXIT_FAILURE);
-			return -1;
-		}
+		process_request(clt, apdu);
 
 		response(clt);
 
@@ -241,11 +246,15 @@ client_t *client_create()
 	memset(c, 0, sizeof(*c));
 	uv_tcp_init(loop, (uv_tcp_t *)c);
 	c->t1.data = c;
+	c->t1_u.data = c;
 	c->t2.data = c;
 	c->t3.data = c;
+	c->tc.data = c;
 	uv_timer_init(loop, &c->t1);
+	uv_timer_init(loop, &c->t1_u);
 	uv_timer_init(loop, &c->t2);
 	uv_timer_init(loop, &c->t3);
+	uv_timer_init(loop, &c->tc);
 
 	STAILQ_INIT(&c->write_queue);
 	return c;
@@ -258,8 +267,10 @@ void client_close(uv_handle_t *h)
 	iec104_log(LOG_DEBUG, "Client %p destroyed", h);
 #endif
 	uv_timer_stop(&c->t1);
+	uv_timer_stop(&c->t1_u);
 	uv_timer_stop(&c->t2);
 	uv_timer_stop(&c->t3);
+	uv_timer_stop(&c->tc);
 
 	// очистить очередь
 	write_queue_t *q = &c->write_queue;

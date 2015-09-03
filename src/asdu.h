@@ -5,8 +5,9 @@ typedef enum {
 	ASDU_TYPE_NOT_DEFINED,
 	M_ME_NC_1 = 13,		// measured, short FP number
 	C_IC_NA_1 = 100,	// interrogation command
-	C_CI_NA_1 = 101,	// counter interrogation command
-	C_CS_NA_1 = 103		// clock synchronization command
+	C_RD_NA_1 = 102,	// read command
+	C_CS_NA_1 = 103,	// clock synchronization command
+	P_AC_NA_1 = 113,	// parameter activation
 } ASDU_TYPE;
 
 // Cause of transmission
@@ -61,12 +62,35 @@ typedef struct _qualifier_t {
 			unsigned char NT:1;	// Not Topical
 			unsigned char IV:1; // Invalid
 		} QDS;
+		struct {
+			unsigned char QPA; // 3 - activation
+		};
 	};
 } qualifier_t;
+
+typedef struct __attribute__((__packed__)) _CP56Time2a_t {
+	unsigned short ms;	// 0 ... 59999
+	unsigned char min;	// 0 ... 59
+	unsigned char hour;	// 0 ... 23
+	unsigned char day;	// 1 ... 31
+	unsigned char month;// 1 ... 12
+	unsigned char year;	// 0 ... 99
+} CP56Time2a_t;
 
 typedef struct _type_100_t {
 	qualifier_t qual;
 } type_100_t;
+
+typedef struct _type_102_t {
+} type_102_t;
+
+typedef struct _type_103_t {
+	CP56Time2a_t time;
+} type_103_t;
+
+typedef struct _type_113_t {
+	qualifier_t qual;
+} type_113_t;
 
 typedef struct __attribute__((__packed__)) _type_13_t {
 	float sfpn;	//short FP number
@@ -77,6 +101,9 @@ typedef struct _inf_el_t {
 	union {
 		type_13_t t13;
 		type_100_t t100;
+		type_102_t t102;
+		type_103_t t103;
+		type_113_t t113;
 	};
 } inf_el_t;
 
@@ -91,8 +118,14 @@ typedef struct _asdu_t {
 	inf_obj_t inf_obj[];
 } asdu_t;
 
-extern int process_asdu(client_t *clt, asdu_t *asdu, int size);
-
-extern int station_interrogation(client_t *clt, int group, unsigned short common_adr);
+extern int check_asdu(client_t *clt, asdu_t *asdu, int size);
+extern void process_asdu(client_t *clt, asdu_t *asdu, int size);
+extern void station_interrogation(client_t *clt, int group, unsigned short common_adr);
+extern void read_single_data(client_t *clt, unsigned char adr);
+extern void cyclic_poll(client_t *clt);
+extern int adr_exist(unsigned short adr);
+extern int activate_analog(unsigned short adr, int new_state);
+extern void read_inf_obj(client_t *clt, unsigned short adr);
+extern void sync_clock(CP56Time2a_t *t56);
 extern unsigned char iec104_originator_adr;
 #endif

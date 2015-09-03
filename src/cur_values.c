@@ -6,6 +6,7 @@
 #include <sys/queue.h>
 #include <uv.h>
 
+#include "iec104.h"
 #include "client.h"
 #include "apdu.h"
 #include "asdu.h"
@@ -44,10 +45,18 @@
  * Группа 1. Счетчики. ******************************
  * Смещение Адрес	Кол.	Тип		Параметр
  * 0		30000	1		BCR		Абсолютный индекс
+ *
+ * 4. Циклическая передача.
+ * Передаются аналоги без метки времени.
+ *
+ * TODO
+ *	- Спорадическая передача. В идеале: Редкая 
+ *	циклическая передача и спорадическая по изменению
+ *	- Установка времени
+ *	- Передача файлов
  */
 
-//#define DEFAULT_PERIODIC_ANALOGS "1,62-135,12584-12603"
-#define DEFAULT_PERIODIC_ANALOGS "1-12603"
+#define DEFAULT_PERIODIC_ANALOGS "1,62-135,12584-12603"
 int iec104_analogs_offset = 180;
 int iec104_dsp_data_size = 50592;
 // Строка из конф. файла вида
@@ -58,6 +67,7 @@ char *iec104_periodic_analogs = NULL;
 static int *periodic_analogs = NULL;
 static int periodic_analogs_num;
 static void *dsp_data = NULL;
+static int dsp_data_invalid;
 static int check_periodic_analogs();
 static void list_periodic_analogs();
 static float get_value_by_adr(int adr);
@@ -90,6 +100,7 @@ int cur_values_close()
 	dsp_data = NULL;
 	return 0;
 }
+
 
 // список д.б. возрастающий
 // @return: число аналоговых сигналов или -1
@@ -136,6 +147,37 @@ err:
 	return ret;
 }
 
+int adr_exist(unsigned short adr)
+{
+	if (adr == 0 || adr > (iec104_dsp_data_size-iec104_analogs_offset)/(sizeof(float)))
+		return 0;
+	return 1;
+}
+
+// активация/деактивация аналога на время сеанса
+int activate_analog(unsigned short adr, int new_state)
+{
+	// is adr active?
+	int active = 0, i; 
+	for (i = 0; i < periodic_analogs_num; i++)
+		if (periodic_analogs[i] >= adr) {
+			active = periodic_analogs[i] == adr;
+			break;
+		}
+	// nothing to do
+	if (active == new_state)
+		return 0;
+
+	periodic_analogs_num += (new_state? 1: -1);
+	periodic_analogs = (int *)realloc(periodic_analogs, periodic_analogs_num);
+	if (new_state) {
+		memcpy(&periodic_analogs[i+1], &periodic_analogs[i], (periodic_analogs_num-i-1)*sizeof(int));
+		periodic_analogs[i] = adr;
+	} else
+		memcpy(&periodic_analogs[i], &periodic_analogs[i+1], (periodic_analogs_num-i)*sizeof(int));
+	return 0;
+}
+
 void list_periodic_analogs()
 {	
 	char *comma_token, *dash_token;
@@ -158,26 +200,23 @@ void list_periodic_analogs()
 
 	free(str);
 }
-// @return: -1 error 0/1 invalid
-int read_dsp_data()
-{
 
-	int invalid = 0;
+void read_dsp_data(client_t *clt)
+{
+	dsp_data_invalid = 1;
 	int sz = getRecordSize();
-	if (sz == -1) {
+	if (sz == -1)
 		iec104_log(LOG_DEBUG, "Ошибка чтения размера данных dsp");
-		invalid = 1;
-	} else if (sz != iec104_dsp_data_size) {
+	else if (sz != iec104_dsp_data_size) {
 		iec104_log(LOG_ERR, "Заданная длина данных dsp (%d) не совпадает с реальной (%d)", iec104_dsp_data_size, sz);
-		invalid = -1;
+		uv_close((uv_handle_t*) clt, client_close);
+		clean_exit_with_status(EXIT_FAILURE);
 	} else {
-		if (getActualData(0, sz, dsp_data)) {
+		if (getActualData(0, sz, dsp_data))
 			iec104_log(LOG_DEBUG, "Ошибка чтения текущих данных dsp");
-			invalid = 0;
-		}
+		else 
+			dsp_data_invalid = 0;
 	}
-	
-	return invalid;
 }
 
 float get_value_by_adr(int adr)
@@ -187,16 +226,18 @@ float get_value_by_adr(int adr)
 }
 
 // Общий/групповой опрос (соотв. группы 0/1)
-int station_interrogation(client_t *clt, int group, unsigned short common_adr)
+void station_interrogation(client_t *clt, int group, unsigned short common_adr)
 {
+#ifdef DEBUG
+	iec104_log(LOG_DEBUG, "station interrogation");
+#endif
+
 	if (group != 0 && group != 1) {
 		iec104_log(LOG_WARNING, "Группа %d не содержит сигналов", group);
-		return 0;
+		return;
 	}
 
-	int invalid = read_dsp_data();
-	if (invalid == -1)
-		return -1;
+	read_dsp_data(clt);
 
 #if 0
 	timeval cur_tv;	
@@ -211,7 +252,7 @@ int station_interrogation(client_t *clt, int group, unsigned short common_adr)
 	asdu_t *out_asdu = (asdu_t *)&buf[sizeof(apdu_t)];
 	init_apdu(clt, out_apdu, AT_I);
 	out_asdu->dui.type_id = M_ME_NC_1; 
-	out_asdu->dui.code = COT_STATION_INTERROGATION;
+	out_asdu->dui.code = COT_STATION_INTERROGATION + group;
 	out_asdu->dui.common_adr = common_adr;
 	out_apdu->apci.len += sizeof(asdu_t);
 #ifdef DEBUG
@@ -233,13 +274,82 @@ int station_interrogation(client_t *clt, int group, unsigned short common_adr)
 		inf_obj_t *obj = (inf_obj_t *)&buf[out_apdu->apci.len + 2];
 		obj->adr = periodic_analogs[i];
 		obj->inf_el[0].t13.sfpn = get_value_by_adr(periodic_analogs[i]); 
-		obj->inf_el[0].t13.qual.QDS.IV = invalid;
+		obj->inf_el[0].t13.qual.QDS.IV = dsp_data_invalid;
 
 		out_apdu->apci.len += sizeof(inf_obj_t) + 
 			sizeof(type_13_t);
 		out_asdu->dui.num = ++j;
 	}
 	enqueue_apdu(clt, out_apdu);
+}
 
-	return 0;
+void read_single_data(client_t *clt, unsigned char adr)
+{
+	read_dsp_data(clt);
+
+	char buf[APDU_MAX_LEN+2] = {0};
+	apdu_t *out_apdu = (apdu_t *)buf;
+	asdu_t *out_asdu = (asdu_t *)&buf[sizeof(apdu_t)];
+	init_apdu(clt, out_apdu, AT_I);
+	out_asdu->dui.type_id = M_ME_NC_1; 
+	out_asdu->dui.num = 1;
+	out_asdu->dui.code = COT_REQUEST;
+	//out_asdu->dui.common_adr = common_adr;
+	inf_obj_t *obj = &out_asdu->inf_obj[0];
+	obj->adr = adr;
+	obj->inf_el[0].t13.sfpn = get_value_by_adr(adr); 
+	obj->inf_el[0].t13.qual.QDS.IV = dsp_data_invalid;
+	out_apdu->apci.len += sizeof(asdu_t) + 
+		sizeof(inf_obj_t) + sizeof(type_13_t);
+	enqueue_apdu(clt, out_apdu);
+}
+
+// Циклический опрос
+void cyclic_poll(client_t *clt)
+{
+#ifdef DEBUG
+	iec104_log(LOG_DEBUG, "cyclic poll");
+#endif
+
+	read_dsp_data(clt);
+
+#if 0
+	timeval cur_tv;	
+	if (valid)
+		get_dsp_time(&cur_tv);
+	else
+		gettimeofday(&cur_tv, NULL);
+#endif
+
+	char buf[APDU_MAX_LEN+2] = {0};
+	apdu_t *out_apdu = (apdu_t *)buf;
+	asdu_t *out_asdu = (asdu_t *)&buf[sizeof(apdu_t)];
+	init_apdu(clt, out_apdu, AT_I);
+	out_asdu->dui.type_id = M_ME_NC_1; 
+	out_asdu->dui.code = COT_CYCLIC;
+	//out_asdu->dui.common_adr = common_adr;
+	out_apdu->apci.len += sizeof(asdu_t);
+	for (int i = 0, j = 0; i < periodic_analogs_num; i++) {
+		if (out_apdu->apci.len + sizeof(inf_obj_t) + 
+			sizeof(type_13_t) > APDU_MAX_LEN) {
+			j = 0;
+			// Apdu заполнено, засунуть его в очередь 
+			// и начать новое
+			enqueue_apdu(clt, out_apdu);
+			init_apdu(clt, out_apdu, AT_I);
+			out_asdu->dui.type_id = M_ME_NC_1; 
+			out_asdu->dui.code = COT_CYCLIC;
+			out_apdu->apci.len += sizeof(asdu_t);
+		}
+		// адрес объекта и значение
+		inf_obj_t *obj = (inf_obj_t *)&buf[out_apdu->apci.len + 2];
+		obj->adr = periodic_analogs[i];
+		obj->inf_el[0].t13.sfpn = get_value_by_adr(periodic_analogs[i]); 
+		obj->inf_el[0].t13.qual.QDS.IV = dsp_data_invalid;
+
+		out_apdu->apci.len += sizeof(inf_obj_t) + 
+			sizeof(type_13_t);
+		out_asdu->dui.num = ++j;
+	}
+	enqueue_apdu(clt, out_apdu);
 }

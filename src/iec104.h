@@ -11,6 +11,17 @@ extern uv_loop_t *loop;
 #define IEC104_CONFPATH "/etc/opt/marsenergo"
 extern const char *iec104_confpath;
 
+extern int iec104_k;
+extern int iec104_w;
+extern int iec104_analogs_offset;
+extern int iec104_dsp_data_size;
+extern char *iec104_periodic_analogs;
+extern int iec104_t1_timeout_s;
+extern int iec104_t2_timeout_s;
+extern int iec104_t3_timeout_s;
+extern int iec104_tc_timeout_s;
+extern unsigned short iec104_station_address;
+
 extern void clean_exit_with_status(int status);
 
 #endif /* IEC104_H_ */

@@ -3,6 +3,7 @@
 
 typedef struct _write_queue_el_t { 
 	STAILQ_ENTRY(_write_queue_el_t) next;
+	time_t time;	// sent time
 	char data[];
 } write_queue_el_t;
 
@@ -23,8 +24,10 @@ typedef struct _client_t {
 		int nk;	// number of not confirmed
 	};
 	uv_timer_t t1;	// подтвержд. последнего переданного
+	uv_timer_t t1_u;// подтвержд. последнего переданного U
 	uv_timer_t t2;	// подтвержд. последнего принятого	
 	uv_timer_t t3;	// тестирование при неактивности 
+	uv_timer_t tc;	// cyclic 
 } client_t;
 
 
@@ -34,6 +37,8 @@ extern void response(client_t *clt);
 extern client_t *client_create();
 extern void client_close(uv_handle_t *h);
 extern void start_t1(client_t *clt);
+extern void restart_t1(client_t *clt, int s);
 extern void start_t2(client_t *clt);
 extern void start_t3(client_t *clt);
+extern void start_tc(client_t *clt);
 #endif

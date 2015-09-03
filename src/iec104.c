@@ -1,6 +1,7 @@
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
+#define _GNU_SOURCE
 #define _DEFAULT_SOURCE		// for daemon
 #include <unistd.h>
 #include <stdlib.h>
@@ -300,20 +301,42 @@ int iec104_read_conf(const char *file)
 			iec104_debug = atoi(val);
 		} else if (!strcasecmp(key, "foreground")) {
 			foreground = atoi(val);
+		} else if (!strcasecmp(key, "k")) {
+			iec104_k = atoi(val);
+		} else if (!strcasecmp(key, "w")) {
+			iec104_w = atoi(val);
+		} else if (!strcasecmp(key, "analogs-offset")) {
+			iec104_analogs_offset = atoi(val);
+		} else if (!strcasecmp(key, "dsp-data-size")) {
+			iec104_dsp_data_size = atoi(val);
+		} else if (!strcasecmp(key, "periodic-analogs")) {
+			char *_p = iec104_periodic_analogs;
+			asprintf(&iec104_periodic_analogs, "%s", val);
+			free(_p);
+		} else if (!strcasecmp(key, "t1")) {
+			iec104_t1_timeout_s = atoi(val);
+		} else if (!strcasecmp(key, "t2")) {
+			iec104_t2_timeout_s = atoi(val);
+		} else if (!strcasecmp(key, "t3")) {
+			iec104_t3_timeout_s = atoi(val);
+		} else if (!strcasecmp(key, "station-address")) {
+			iec104_station_address = atoi(val);
+		} else if (!strcasecmp(key, "cyclic-poll-period")) {
+			iec104_tc_timeout_s = atoi(val);
 		} else {
 			iec104_log(LOG_WARNING,
 			    "unknown option '%s' in %s at line %d",
 			    key, file, line);
 			continue;
 		}
-	}
+	}	
 
 	fclose(fp);
 
 	return 0;
 }
 
-static int create_pidfile(void)
+int create_pidfile()
 {
 	int fd;
 
