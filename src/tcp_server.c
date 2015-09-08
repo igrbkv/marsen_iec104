@@ -20,6 +20,9 @@ static uv_tcp_t server;
 void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
 	buf->base = (char*) malloc(suggested_size);
 	buf->len = suggested_size;
+#ifdef DEBUG
+	iec104_log(LOG_DEBUG, "alloc to read: %lu", suggested_size);
+#endif
 }
 
 
@@ -35,8 +38,12 @@ void tcp_server_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf) {
 		if (client_parse_request((client_t *)client, buf, nread) == -1)
 			iec104_log(LOG_ERR, "Ошибка разбора пакета");
 	}
-	if (buf->base)
+	if (buf->base) {
+#ifdef DEBUG
+		iec104_log(LOG_DEBUG, "free to read");
+#endif
 		free(buf->base);
+	}
 }
 
 void on_new_connection(uv_stream_t *server, int status) {

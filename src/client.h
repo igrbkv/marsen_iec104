@@ -27,7 +27,7 @@ typedef struct _client_t {
 	uv_timer_t t1_u;// подтвержд. последнего переданного U
 	uv_timer_t t2;	// подтвержд. последнего принятого	
 	uv_timer_t t3;	// тестирование при неактивности 
-	uv_timer_t tc;	// cyclic 
+	uv_timer_t tc;	// cyclic
 } client_t;
 
 

@@ -18,7 +18,6 @@
 
 unsigned short iec104_station_address;
 
-
 int check_asdu(client_t *clt, asdu_t *in_asdu, int size)
 {
 	unsigned char err_cot = 0;
@@ -76,9 +75,7 @@ int check_asdu(client_t *clt, asdu_t *in_asdu, int size)
 		}
 	}
 
-	if (!err_cot && iec104_station_address && 
-		in_asdu->dui.common_adr && 
-		in_asdu->dui.common_adr != iec104_station_address)
+	if (!err_cot && in_asdu->dui.common_adr) 
 		err_cot = COT_UNKNOWN_COMMON_ADDRESS;
 
 	if (err_cot) {
@@ -108,12 +105,14 @@ void process_asdu(client_t *clt, asdu_t *in_asdu, int size)
 				init_apdu(clt, out_apdu, AT_I);
 				*out_asdu = *in_asdu;
 				out_asdu->dui.code = COT_ACTIVATION_CONFIRMATION;
+				out_asdu->dui.originator_adr = iec104_station_address;
+
 				out_asdu->inf_obj[0].inf_el[0].t100.qual.QOI = 20;
 				out_apdu->apci.len += sizeof(asdu_t) + sizeof(inf_obj_t) + sizeof(qualifier_t);
 				enqueue_apdu(clt, out_apdu);
 
 				// data transmission
-				station_interrogation(clt, 0, in_asdu->dui.originator_adr);
+				station_interrogation(clt, 0);
 				
 				// termination
 				init_apdu(clt, out_apdu, AT_I);
@@ -125,6 +124,7 @@ void process_asdu(client_t *clt, asdu_t *in_asdu, int size)
 				init_apdu(clt, out_apdu, AT_I);
 				*out_asdu = *in_asdu;
 				out_asdu->dui.code = COT_DEACTIVATION_CONFIRMATION;
+				out_asdu->dui.originator_adr = iec104_station_address;
 				out_apdu->apci.len += sizeof(asdu_t) + sizeof(inf_obj_t) + sizeof(qualifier_t);
 				enqueue_apdu(clt, out_apdu);
 			}
@@ -139,6 +139,7 @@ void process_asdu(client_t *clt, asdu_t *in_asdu, int size)
 			out_apdu->apci.len += size;
 			// COT_X + 1 = COT_X_CONFIRMATION
 			out_asdu->dui.code = in_asdu->dui.code + 1;
+			out_asdu->dui.originator_adr = iec104_station_address;
 			enqueue_apdu(clt, out_apdu);
 			break;
 		}
@@ -151,7 +152,7 @@ void process_asdu(client_t *clt, asdu_t *in_asdu, int size)
 			init_apdu(clt, out_apdu, AT_I);
 			memcpy(out_asdu, in_asdu, size);
 			out_apdu->apci.len += size;
-
+			out_asdu->dui.originator_adr = iec104_station_address;
 			CP56Time2a_t *time56 = 
 				&out_asdu->inf_obj[0].inf_el[0].t103.time;
 

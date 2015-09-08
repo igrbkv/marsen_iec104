@@ -45,7 +45,8 @@ typedef struct _data_unit_id_t {
 		unsigned char test_bit:1;
 		unsigned char originator_adr;
 	};
-	unsigned short common_adr;
+	unsigned short common_adr;	// не используется
+								// (нет сложной адресации ASDU см.5-3)
 
 } data_unit_id_t;
 
@@ -120,8 +121,8 @@ typedef struct _asdu_t {
 
 extern int check_asdu(client_t *clt, asdu_t *asdu, int size);
 extern void process_asdu(client_t *clt, asdu_t *asdu, int size);
-extern void station_interrogation(client_t *clt, int group, unsigned short common_adr);
-extern void read_single_data(client_t *clt, unsigned char adr);
+extern void station_interrogation(client_t *clt, int group);
+extern void read_single_data(client_t *clt, unsigned char obj_adr);
 extern void cyclic_poll(client_t *clt);
 extern int adr_exist(unsigned short adr);
 extern int activate_analog(unsigned short adr, int new_state);

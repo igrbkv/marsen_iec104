@@ -11,10 +11,10 @@
 #include "debug.h"
 
 // t2 timeout < t1 timeout < t3 timeout
-int iec104_t1_timeout_s = 15;
-int iec104_t2_timeout_s = 10;
-int iec104_t3_timeout_s = 20;
-int iec104_tc_timeout_s = 3;
+int iec104_t1_timeout_s;
+int iec104_t2_timeout_s;
+int iec104_t3_timeout_s;
+int iec104_tc_timeout_s;
 
 static void t1_cb(uv_timer_t *t);
 static void t1_u_cb(uv_timer_t *t);

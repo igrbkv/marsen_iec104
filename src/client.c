@@ -19,8 +19,8 @@ typedef struct _write_req_t {
 	uv_buf_t buf;
 } write_req_t;
 
-int iec104_k = 12; // max num of sent APDU waiting for confirm
-int iec104_w = 8; // -- " --   received  -- " --
+int iec104_k; // max num of sent APDU waiting for confirm
+int iec104_w; // -- " --   received  -- " --
 
 static void process_request(client_t *clt, apdu_t *apdu);
 static void remove_confirmed(client_t *clt, unsigned short n);
@@ -28,13 +28,14 @@ static void remove_confirmed(client_t *clt, unsigned short n);
 
 void on_write(uv_write_t *req, int status)
 {
+	uv_handle_t *h = (uv_handle_t *)req->handle;
 	write_req_t *wr = (write_req_t*) req;
 
 	free(wr->buf.base);
 	free(wr);
 
 	if (status < 0) {
-		uv_close((uv_handle_t*)req->handle, client_close);
+		uv_close(h, client_close);
 		return;
 	}
 }

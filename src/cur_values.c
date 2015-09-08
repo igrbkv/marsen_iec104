@@ -56,12 +56,11 @@
  *	- Передача файлов
  */
 
-#define DEFAULT_PERIODIC_ANALOGS "1,62-135,12584-12603"
-int iec104_analogs_offset = 180;
-int iec104_dsp_data_size = 50592;
+int iec104_analogs_offset;
+int iec104_dsp_data_size;
 // Строка из конф. файла вида
 // 1, 62-71, ...
-char *iec104_periodic_analogs = NULL;
+char *iec104_periodic_analogs;
 
 
 static int *periodic_analogs = NULL;
@@ -75,8 +74,6 @@ static float get_value_by_adr(int adr);
 int cur_values_init()
 {
 	int ret = -1;
-	if (!iec104_periodic_analogs)
-		iec104_periodic_analogs = strdup(DEFAULT_PERIODIC_ANALOGS);
 
 	periodic_analogs_num = check_periodic_analogs();
 	if (periodic_analogs_num == -1)
@@ -226,7 +223,7 @@ float get_value_by_adr(int adr)
 }
 
 // Общий/групповой опрос (соотв. группы 0/1)
-void station_interrogation(client_t *clt, int group, unsigned short common_adr)
+void station_interrogation(client_t *clt, int group)
 {
 #ifdef DEBUG
 	iec104_log(LOG_DEBUG, "station interrogation");
@@ -253,7 +250,6 @@ void station_interrogation(client_t *clt, int group, unsigned short common_adr)
 	init_apdu(clt, out_apdu, AT_I);
 	out_asdu->dui.type_id = M_ME_NC_1; 
 	out_asdu->dui.code = COT_STATION_INTERROGATION + group;
-	out_asdu->dui.common_adr = common_adr;
 	out_apdu->apci.len += sizeof(asdu_t);
 #ifdef DEBUG
 	iec104_log(LOG_DEBUG, "sizeof(apdu_t): %ld sizeof(asdu_t): %ld sizeof(inf_obj_t): %ld sizeof(type_13_t): %ld", sizeof(apdu_t), sizeof(asdu_t), sizeof(inf_obj_t), sizeof(type_13_t));
@@ -283,7 +279,7 @@ void station_interrogation(client_t *clt, int group, unsigned short common_adr)
 	enqueue_apdu(clt, out_apdu);
 }
 
-void read_single_data(client_t *clt, unsigned char adr)
+void read_single_data(client_t *clt, unsigned char obj_adr)
 {
 	read_dsp_data(clt);
 
@@ -294,10 +290,9 @@ void read_single_data(client_t *clt, unsigned char adr)
 	out_asdu->dui.type_id = M_ME_NC_1; 
 	out_asdu->dui.num = 1;
 	out_asdu->dui.code = COT_REQUEST;
-	//out_asdu->dui.common_adr = common_adr;
 	inf_obj_t *obj = &out_asdu->inf_obj[0];
-	obj->adr = adr;
-	obj->inf_el[0].t13.sfpn = get_value_by_adr(adr); 
+	obj->adr = obj_adr;
+	obj->inf_el[0].t13.sfpn = get_value_by_adr(obj_adr); 
 	obj->inf_el[0].t13.qual.QDS.IV = dsp_data_invalid;
 	out_apdu->apci.len += sizeof(asdu_t) + 
 		sizeof(inf_obj_t) + sizeof(type_13_t);
@@ -327,7 +322,7 @@ void cyclic_poll(client_t *clt)
 	init_apdu(clt, out_apdu, AT_I);
 	out_asdu->dui.type_id = M_ME_NC_1; 
 	out_asdu->dui.code = COT_CYCLIC;
-	//out_asdu->dui.common_adr = common_adr;
+	out_asdu->dui.originator_adr = iec104_station_address;
 	out_apdu->apci.len += sizeof(asdu_t);
 	for (int i = 0, j = 0; i < periodic_analogs_num; i++) {
 		if (out_apdu->apci.len + sizeof(inf_obj_t) + 
@@ -339,6 +334,7 @@ void cyclic_poll(client_t *clt)
 			init_apdu(clt, out_apdu, AT_I);
 			out_asdu->dui.type_id = M_ME_NC_1; 
 			out_asdu->dui.code = COT_CYCLIC;
+			out_asdu->dui.originator_adr = iec104_station_address;
 			out_apdu->apci.len += sizeof(asdu_t);
 		}
 		// адрес объекта и значение

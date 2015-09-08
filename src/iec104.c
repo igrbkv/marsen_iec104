@@ -27,6 +27,17 @@
 #define IEC104_CONFFILE IEC104_CONFPATH "/iec104.conf"
 #define IEC104_PIDFILE "/var/run/iec104.pid" 
 
+#define DEFAULT_ANALOGS_OFFSET 180
+#define DEFAULT_DSP_DATA_SIZE 50592
+#define DEFAULT_PERIODIC_ANALOGS "1,62-135,12584-12603"
+#define DEFAULT_K 12
+#define DEFAULT_W 8
+#define DEFAULT_STATION_ADDRESS 0
+#define DEFAULT_T1 15
+#define DEFAULT_T2 10
+#define DEFAULT_T3 20
+#define DEFAULT_CYCLIC_POLL_PERIOD 3
+
 static void default_init();
 static int handle_cmdline(int *argc, char ***argv);
 static void open_log(void);
@@ -103,6 +114,18 @@ static void default_init()
 {
 	conffile = IEC104_CONFFILE;
     foreground = 0;
+	iec104_debug = 0;
+
+	iec104_analogs_offset = DEFAULT_ANALOGS_OFFSET;
+	iec104_dsp_data_size = DEFAULT_DSP_DATA_SIZE;
+	iec104_periodic_analogs = strdup(DEFAULT_PERIODIC_ANALOGS);
+	iec104_k = DEFAULT_K;
+	iec104_w = DEFAULT_W;
+	iec104_station_address = DEFAULT_STATION_ADDRESS;
+	iec104_t1_timeout_s = DEFAULT_T1;
+	iec104_t2_timeout_s = DEFAULT_T2;
+	iec104_t3_timeout_s = DEFAULT_T3;
+	iec104_tc_timeout_s = DEFAULT_CYCLIC_POLL_PERIOD;
 }
 
 static void open_log(void)
@@ -149,6 +172,8 @@ static void reload_conf(int sig __attribute__((unused)))
 	restart = 1;
 	iec104_log(LOG_NOTICE, "reloading configuration");
 	cleanup();
+
+	default_init();
 
 	if (iec104_read_conf(conffile) == -1)
 		goto err;
@@ -310,9 +335,7 @@ int iec104_read_conf(const char *file)
 		} else if (!strcasecmp(key, "dsp-data-size")) {
 			iec104_dsp_data_size = atoi(val);
 		} else if (!strcasecmp(key, "periodic-analogs")) {
-			char *_p = iec104_periodic_analogs;
 			asprintf(&iec104_periodic_analogs, "%s", val);
-			free(_p);
 		} else if (!strcasecmp(key, "t1")) {
 			iec104_t1_timeout_s = atoi(val);
 		} else if (!strcasecmp(key, "t2")) {
