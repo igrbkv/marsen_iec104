@@ -17,16 +17,24 @@
 void print_apdu(const char *head, const char *buf, int size)
 {
 	char *p = NULL;
-	int total = 0, j = 0;
+	int total = 0, n = 0;
 	asprintf(&p, "%s (%d)[0]:", head, size);
 	while (total < size) {
 		apdu_t *apdu = (apdu_t *)&buf[total];
-		for (int i = 0; i < apdu->apci.len+2; i++, total++)
-			asprintf(&p, "%s %02x", p, (unsigned char)buf[total]);
+		for (int i = 0; i < apdu->apci.len+2; i++, total++) {
+			char *_p = NULL;
+			asprintf(&_p, "%s %02x", p, (unsigned char)buf[total]);
+			free(p);
+			p = _p;
+
+		}
 		iec104_log(LOG_DEBUG, "%s", p);
-		asprintf(&p, "%s[%d]:", head, ++j);
+		free(p);
+		p = NULL;
+		asprintf(&p, "%s[%d]:", head, ++n);
 	}
-	free(p);
+	if (p)
+		free(p);
 }
 
 int check_apdu(client_t *clt, const uv_buf_t *buf, ssize_t sz, int offset)

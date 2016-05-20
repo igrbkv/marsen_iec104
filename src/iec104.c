@@ -23,8 +23,9 @@
 #include "tcp_server.h"
 #include "cur_values.h"
 #include "log.h"
+#include "settings.h"
 
-#define IEC104_CONFFILE IEC104_CONFPATH "/iec104.conf"
+#define IEC104_CONFFILE IEC104_CONFPATH "/settings.json"
 #define IEC104_PIDFILE "/var/run/iec104.pid" 
 
 #define DEFAULT_ANALOGS_OFFSET 180
@@ -44,13 +45,10 @@ static void open_log(void);
 static void clean_exit(int sig);
 static void reload_conf(int sig);
 static int create_pidfile();
-int iec104_read_conf(const char *file);
-int check_conf();
-
 
 const char *progname;
 const char *iec104_confpath = IEC104_CONFPATH;
-static char *conffile;
+const char *iec104_conffile = IEC104_CONFFILE;
 static const char *pidfile = IEC104_PIDFILE; 
 
 uv_loop_t *loop = NULL;
@@ -70,9 +68,6 @@ int main(int argc, char **argv)
 	handle_cmdline(&argc, &argv);
 	open_log();
 
-	/* read in our configuration */
-	if (iec104_read_conf(conffile) == -1)
-		goto end;
 
 	if (!foreground) {
 		if (daemon(0, 0) == -1) {
@@ -92,13 +87,17 @@ int main(int argc, char **argv)
 	if (!foreground && create_pidfile() < 0)
 		goto end;
 
+	iec104_log(LOG_INFO, "started");		
+
 	loop = uv_default_loop();
+
+	/* read configuration */
+	if (settings_init() == -1)
+		goto end;
 
 	if (cur_values_init() == -1 || 
 		tcp_server_init() == -1)
 		goto  end;
-
-	iec104_log(LOG_INFO, "started");		
 
 	uv_run(loop, UV_RUN_DEFAULT);
 
@@ -112,7 +111,6 @@ end:
 
 static void default_init()
 {
-	conffile = IEC104_CONFFILE;
     foreground = 0;
 	iec104_debug = 0;
 
@@ -145,6 +143,7 @@ static void cleanup()
 
 	tcp_server_close();
 	cur_values_close();
+	settings_close();
 
 	if (loop != NULL) {
 		uv_loop_close(loop);
@@ -175,11 +174,10 @@ static void reload_conf(int sig __attribute__((unused)))
 
 	default_init();
 
-	if (iec104_read_conf(conffile) == -1)
-		goto err;
-	
 	loop = uv_default_loop();
-	if (cur_values_init() == -1 ||
+
+	if (settings_init() == -1 ||
+		cur_values_init() == -1 ||
 		tcp_server_init() == -1)
 		goto err;
 	uv_run(loop, UV_RUN_DEFAULT);
@@ -195,7 +193,6 @@ err:
 static int handle_cmdline(int *argc, char ***argv)
 {
 	struct option opts[] = {
-		{"conffile", 1, 0, 'c'},
 		{"debug", 0, 0, 'd'},
 		{"debug-foreground", 0, 0, 'D'},
 		{"foreground", 0, 0, 'f'},
@@ -204,7 +201,6 @@ static int handle_cmdline(int *argc, char ***argv)
 		{NULL, 0, 0, 0},
 	};
 	const char *opts_help[] = {
-		"Set the configuration file.",	/* conffile */
 		"Increase debugging level.",/* debug */
 		"Increase debugging level (implies -f).",/* debug-foreground */
 		"Run in the foreground.",		/* foreground */
@@ -219,14 +215,11 @@ static int handle_cmdline(int *argc, char ***argv)
 	for (;;) {
 		int i;
 		i = getopt_long(*argc, *argv,
-		    "c:dDfvh", opts, NULL);
+		    "dDfvh", opts, NULL);
 		if (i == -1) {
 			break;
 		}
 		switch (i) {
-		case 'c':
-			conffile = optarg;
-			break;
 		case 'd':
 			iec104_debug++;
 			break;
@@ -267,94 +260,6 @@ static int handle_cmdline(int *argc, char ***argv)
 
 	*argc -= optind;
 	*argv += optind;
-
-	return 0;
-}
-
-int iec104_read_conf(const char *file)
-{
-	FILE *fp;
-	char buf[512];
-	int line = 0;
-
-	iec104_log(LOG_DEBUG, "parsing conf file %s", file);
-
-    /* r - read-only */
-	fp = fopen(file, "r");
-	if (!fp) {
-		iec104_log(LOG_ERR, "fopen(%s): %s", file, strerror(errno));
-		return -1;
-	}
-
-	/* read each line */
-	while (!feof(fp) && !ferror(fp)) {
-		char *p = buf;	//, *_p;
-		char key[64];
-		char val[512];
-		int n;
-
-		line++;
-		memset(key, 0, sizeof(key));
-		memset(val, 0, sizeof(val));
-
-		if (fgets(buf, sizeof(buf)-1, fp) == NULL) {
-			continue;
-		}
-
-		/* skip leading whitespace */
-		while (*p && isspace((int)*p)) {
-			p++;
-		}
-		/* blank lines and comments get ignored */
-		if (!*p || *p == '#') {
-			continue;
-		}
-
-		/* quick parse */
-		n = sscanf(p, "%63[^=\n]=%255[^\n]", key, val);
-		if (n != 2) {
-			iec104_log(LOG_WARNING, "can't parse %s at line %d",
-			    file, line);
-			continue;
-		}
-		if (iec104_debug >= 3) {
-			iec104_log(LOG_DEBUG, "    key=\"%s\" val=\"%s\"",
-			    key, val);
-		}
-		/* handle the parsed line */
-		if (!strcasecmp(key, "debug")) {
-			iec104_debug = atoi(val);
-		} else if (!strcasecmp(key, "foreground")) {
-			foreground = atoi(val);
-		} else if (!strcasecmp(key, "k")) {
-			iec104_k = atoi(val);
-		} else if (!strcasecmp(key, "w")) {
-			iec104_w = atoi(val);
-		} else if (!strcasecmp(key, "analogs-offset")) {
-			iec104_analogs_offset = atoi(val);
-		} else if (!strcasecmp(key, "dsp-data-size")) {
-			iec104_dsp_data_size = atoi(val);
-		} else if (!strcasecmp(key, "periodic-analogs")) {
-			asprintf(&iec104_periodic_analogs, "%s", val);
-		} else if (!strcasecmp(key, "t1")) {
-			iec104_t1_timeout_s = atoi(val);
-		} else if (!strcasecmp(key, "t2")) {
-			iec104_t2_timeout_s = atoi(val);
-		} else if (!strcasecmp(key, "t3")) {
-			iec104_t3_timeout_s = atoi(val);
-		} else if (!strcasecmp(key, "station-address")) {
-			iec104_station_address = atoi(val);
-		} else if (!strcasecmp(key, "cyclic-poll-period")) {
-			iec104_tc_timeout_s = atoi(val);
-		} else {
-			iec104_log(LOG_WARNING,
-			    "unknown option '%s' in %s at line %d",
-			    key, file, line);
-			continue;
-		}
-	}	
-
-	fclose(fp);
 
 	return 0;
 }

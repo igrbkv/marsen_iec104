@@ -40,9 +40,10 @@ void start_t1_u(client_t *clt)
 
 void start_tc(client_t *clt)
 {
+	// FIXME Не использовать период повтора,
+	// при маленьких значениях забивается очередь
 	uv_timer_start(&clt->tc, tc_cb, 
-		iec104_tc_timeout_s*1000, 
-		iec104_tc_timeout_s*1000);
+		iec104_tc_timeout_s*1000, 0);
 #ifdef DEBUG
 	iec104_log(LOG_DEBUG, "start tc");
 #endif
@@ -115,6 +116,7 @@ void tc_cb(uv_timer_t *t)
 	client_t *clt = (client_t *)t->data;
 	cyclic_poll(clt);
 	response(clt);
+	start_tc(clt);
 }
 
 struct timespec CP56Time2a_to_timespec(CP56Time2a_t *t56)

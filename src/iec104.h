@@ -3,6 +3,8 @@
 
 #define PACKAGE 		"iec104"
 
+#include <uv.h>
+
 extern int iec104_debug;
 extern const char *progname;
 extern uv_loop_t *loop;
@@ -10,6 +12,7 @@ extern uv_loop_t *loop;
 #define IEC104_PORT 2404
 #define IEC104_CONFPATH "/etc/opt/marsenergo"
 extern const char *iec104_confpath;
+extern const char *iec104_conffile;
 
 extern int iec104_k;
 extern int iec104_w;

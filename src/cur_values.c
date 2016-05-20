@@ -111,7 +111,7 @@ int check_periodic_analogs()
 	char *err_str = NULL;
 
 	// Parse
-	while (comma_token = strsep(&str, ",")) {
+	while ((comma_token = strsep(&str, ","))) {
 		int lb,rb;
 		dash_token = strsep(&comma_token, "-");
 		lb = atoi(dash_token);
@@ -182,7 +182,7 @@ void list_periodic_analogs()
 	int i = 0;
 	periodic_analogs = (int *)calloc(periodic_analogs_num, sizeof(int));
 
-	while (comma_token = strsep(&str, ",")) {
+	while ((comma_token = strsep(&str, ","))) {
 		int lb,rb;
 		dash_token = strsep(&comma_token, "-");
 		lb = atoi(dash_token);
